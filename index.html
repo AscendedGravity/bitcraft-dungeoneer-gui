@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' http://127.0.0.1:3030;">
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Bitcraft Dungeoneer GUI</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <h1>Bitcraft Dungeoneer GUI</h1>
+    <div class="controls">
+      <button id="refresh-btn">Refresh</button>
+    </div>
+  </header>
+  <main>
+    <aside id="sidebar">
+      <h2>Dungeons</h2>
+      <div id="dungeon-list" class="list"></div>
+    </aside>
+    <section id="content">
+      <div id="dungeon-details"></div>
+      <div id="contrib-list"></div>
+    </section>
+  </main>
+  <script src="renderer.js"></script>
+</body>
+</html>
