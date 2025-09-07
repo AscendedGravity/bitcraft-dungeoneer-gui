@@ -5,7 +5,7 @@ A small Electron-based Windows GUI for the Dungeoneer backend. It fetches data f
 Quick start (PowerShell):
 
 ```powershell
-cd dungeoneer-gui
+cd bitcraft-dungeoneer-gui
 npm install
 npm start
 ```
