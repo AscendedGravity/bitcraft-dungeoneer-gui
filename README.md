@@ -1,6 +1,6 @@
 # Dungeoneer GUI
 
-A small Electron-based Windows GUI for the Dungeoneer backend. It fetches data from the local HTTP API (default http://127.0.0.1:3030) and displays dungeon listings, details and contribution snapshots.
+A small Electron-based Windows GUI for the [Dungeoneer backend](https://github.com/AscendedGravity/bitcraft-dungeoneer-gui) (currently develop branch). It fetches data from the local HTTP API (default http://127.0.0.1:3030) and displays dungeon listings, details and contribution snapshots.
 
 Quick start (PowerShell):
 
