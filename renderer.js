@@ -90,6 +90,37 @@ async function init() {
               const diff = ts - now;
               n.textContent = formatCountdown(diff);
             });
+            // also update elapsed timers (MM:SS) for each dungeon button
+            try {
+              const elapsedNodes = document.querySelectorAll('.dungeon-item .elapsed-timer');
+              const nowSec = Math.floor(Date.now() / 1000);
+              // ensure storage
+              window.__dungeoneer_elapsed = window.__dungeoneer_elapsed || {};
+              elapsedNodes.forEach(en => {
+                const btn = en.closest('.dungeon-item');
+                if (!btn) return;
+                const did = btn.getAttribute('data-id');
+                if (!did) return;
+                const state = window.__dungeoneer_elapsed[did];
+                if (!state) {
+                  // hidden
+                  en.style.display = 'none';
+                  en.textContent = '';
+                  return;
+                }
+                if (state.status === 'running') {
+                  const elapsed = (nowSec - (state.startAt || nowSec)) + (state.baseElapsed || 0);
+                  en.style.display = '';
+                  en.textContent = formatElapsedMMSS(elapsed);
+                } else if (state.status === 'stopped') {
+                  en.style.display = '';
+                  en.textContent = formatElapsedMMSS(state.baseElapsed || 0);
+                } else {
+                  en.style.display = 'none';
+                  en.textContent = '';
+                }
+              });
+            } catch (ee) { /* ignore elapsed update errors */ }
           } catch (err) {
             // guard against unexpected DOM changes
             // console.error(err);
@@ -99,6 +130,8 @@ async function init() {
       for (const id of ids) {
   const btn = document.createElement('button');
   btn.className = 'dungeon-item';
+  // tag DOM node with id for elapsed timer updates
+  btn.setAttribute('data-id', id);
   const rawTitle = data[id] && data[id].title ? String(data[id].title) : '';
         // split into name and state by the first ' - ' separator
         let nameText = rawTitle;
@@ -118,11 +151,21 @@ async function init() {
   let kindText = '';
   if (data[id] && data[id].state && data[id].state.kind) kindText = String(data[id].state.kind);
   // create structured content: name/state on left, countdown on right (if ts present)
-        const left = document.createElement('span');
-        left.className = 'dungeon-label';
+    const left = document.createElement('span');
+    left.className = 'dungeon-label';
   left.textContent = kindText ? `${clean(nameText)} — ${clean(kindText)}${playerCountSuffix(data[id], kindText)}` : `${clean(nameText)}${playerCountSuffix(data[id], kindText)}`;
         // apply initial state styling (may be updated by background fetch)
         applyStateClass(btn, data[id], id);
+    // create an elapsed timer element (MM:SS) that will be shown/hidden based on state transitions
+    const elapsed = document.createElement('span');
+    elapsed.className = 'elapsed-timer';
+    // keep element visually compact and to the right of the label; styling can be refined in CSS
+    elapsed.style.marginLeft = '8px';
+    elapsed.style.marginRight = '8px';
+    elapsed.style.whiteSpace = 'nowrap';
+    elapsed.textContent = '';
+    btn.appendChild(left);
+    btn.appendChild(elapsed);
         // if structured kind not present in the listing, fetch the dungeon details in background
         if (!kindText) {
           (async () => {
@@ -132,6 +175,8 @@ async function init() {
               if (sk) left.textContent = `${clean(nameText)} — ${clean(sk)}${playerCountSuffix(dd, sk)}`;
               // update styling with full details
               applyStateClass(btn, dd, id);
+              // update elapsed state according to new details
+              try { updateElapsedStateForBtn(btn, dd, id); } catch (e) { /* swallow */ }
               // if the detailed entry contains a timestamp, update the sidebar countdown element
               try {
                 const tsFromDetail = extractTs(dd);
@@ -150,8 +195,8 @@ async function init() {
             }
           })();
         }
-        const right = document.createElement('span');
-        right.className = 'countdown';
+  const right = document.createElement('span');
+  right.className = 'countdown';
         const ts = extractTs(data[id]);
         if (ts) {
           // store numeric seconds value in attribute for the updater to read
@@ -161,8 +206,9 @@ async function init() {
         } else {
           right.textContent = '';
         }
-        btn.appendChild(left);
         btn.appendChild(right);
+        // initialize elapsed state for this entry according to the current class/state
+        try { updateElapsedStateForBtn(btn, data[id], id); } catch (e) { /* swallow */ }
         btn.onclick = () => loadDetails(id);
         list.appendChild(btn);
       }
@@ -171,6 +217,115 @@ async function init() {
       setStatus('error: ' + e.message);
       list.innerHTML = '<div class="error">Could not load dungeons</div>';
     }
+  }
+
+  // normalize state kind to simple lowercase string or empty
+  function getNormalizedKind(entry) {
+    if (!entry) return '';
+    try {
+      if (entry.state && entry.state.kind) return String(entry.state.kind).toLowerCase();
+      if (entry.title) {
+        const t = String(entry.title).toLowerCase();
+        if (t.includes('boss')) return 'boss';
+        if (t.includes('open')) return 'open';
+        if (t.includes('cleared')) return 'cleared';
+        if (t.includes('closed')) return 'closed';
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  function getPlayersCount(entry) {
+    if (!entry) return 0;
+    const p = entry.players;
+    if (!p && p !== 0) return 0;
+    if (Array.isArray(p)) return p.length;
+    if (typeof p === 'number') return p;
+    if (p && typeof p === 'object') return Object.keys(p).length;
+    return 0;
+  }
+
+  // Manage per-dungeon elapsed timer state stored in window.__dungeoneer_elapsed[<id>]
+  // state = { status: 'hidden'|'running'|'stopped', startAt: unixSec, baseElapsed: seconds }
+  function updateElapsedStateForBtn(btn, entry, id) {
+    window.__dungeoneer_elapsed = window.__dungeoneer_elapsed || {};
+    const prev = window.__dungeoneer_elapsed[id] || { status: 'hidden', startAt: 0, baseElapsed: 0 };
+    const kind = getNormalizedKind(entry);
+    const players = getPlayersCount(entry);
+    // Determine transitions according to rules:
+    // - If the dungeon goes from Empty to Active the timer appears and starts counting up.
+    //   We'll interpret Active as any non-empty open/active state that is not 'empty' or 'closed' or 'cleared' or 'boss'.
+    //   Practically: if previous was empty (no players) and now players>0 and kind is 'open' or '' => start
+    // - If we go from any state to Empty state the timer resets and is not rendered.
+    // - If we go from Boss state to Cleared state the timer is stopped but stays rendered.
+    // - If we go from the Cleared state to Closed state the timer is reset and not rendered.
+
+    // determine if entry is Empty
+    const isEmpty = (players === 0);
+    // determine if previous was empty
+    const prevWasEmpty = prev && prev.prevPlayers === 0;
+
+    // helper to reset
+    const resetState = () => { window.__dungeoneer_elapsed[id] = { status: 'hidden', startAt: 0, baseElapsed: 0, prevPlayers: players }; };
+
+    // If any->Empty: reset/hide
+    if (isEmpty) {
+      resetState();
+      // ensure DOM reflects it
+      const el = btn.querySelector('.elapsed-timer'); if (el) { el.style.display = 'none'; el.textContent = ''; }
+      return;
+    }
+
+    // Boss -> Cleared: stop but keep rendered
+    if (prev && prev.kind === 'boss' && kind === 'cleared') {
+      // stop timer: compute elapsed so far
+      let base = prev.baseElapsed || 0;
+      if (prev.status === 'running' && prev.startAt) {
+        base += Math.floor(Date.now() / 1000) - prev.startAt;
+      }
+      window.__dungeoneer_elapsed[id] = { status: 'stopped', startAt: 0, baseElapsed: base, prevPlayers: players, kind };
+      const el = btn.querySelector('.elapsed-timer'); if (el) { el.style.display = ''; el.textContent = formatElapsedMMSS(base); }
+      return;
+    }
+
+    // Cleared -> Closed: reset/hide
+    if (prev && prev.kind === 'cleared' && kind === 'closed') {
+      resetState();
+      const el = btn.querySelector('.elapsed-timer'); if (el) { el.style.display = 'none'; el.textContent = ''; }
+      return;
+    }
+
+    // Empty -> Active: start
+    // Detect transition from previously empty (or hidden) to now having players and a non-closed kind
+    if ((prevWasEmpty || prev.status === 'hidden') && !isEmpty && kind !== 'closed') {
+      // start new timer
+      window.__dungeoneer_elapsed[id] = { status: 'running', startAt: Math.floor(Date.now() / 1000), baseElapsed: 0, prevPlayers: players, kind };
+      const el = btn.querySelector('.elapsed-timer'); if (el) { el.style.display = ''; el.textContent = formatElapsedMMSS(0); }
+      return;
+    }
+
+    // if we already have a running/stopped state, try to preserve it or update kind/players
+    if (prev && prev.status === 'running') {
+      window.__dungeoneer_elapsed[id] = Object.assign({}, prev, { prevPlayers: players, kind });
+      return;
+    }
+    if (prev && prev.status === 'stopped') {
+      // keep stopped but update prevPlayers/kind
+      window.__dungeoneer_elapsed[id] = Object.assign({}, prev, { prevPlayers: players, kind });
+      return;
+    }
+
+    // default: keep hidden
+    resetState();
+  }
+
+  function formatElapsedMMSS(seconds) {
+    seconds = Math.max(0, Math.floor(seconds || 0));
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    const mm = String(m).padStart(2, '0');
+    const ss = String(s).padStart(2, '0');
+    return `${mm}:${ss}`;
   }
 
   // helper: format seconds diff to human friendly short countdown
