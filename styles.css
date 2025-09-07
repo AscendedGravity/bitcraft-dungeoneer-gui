@@ -26,7 +26,8 @@ main { flex:1; display:flex; min-height:0 }
 }
 
 /* Title inside details (inserted as h2 with id) */
-#detail-title { margin: 0 0 8px 0; padding-bottom: 6px; font-size: 1.15em; border-bottom: 1px solid rgba(255,255,255,0.03); }
+#detail-title { margin: 0 0 8px 0; padding-bottom: 6px; font-size: 1.15em; border-bottom: 1px solid rgba(255,255,255,0.03); display:flex; align-items:center; justify-content:space-between }
+#detail-title .elapsed-timer { margin-left:12px; color:#9aa6b2; font-size:0.95em; font-family: 'Courier New', Courier, monospace }
 
 /* Tighter, clearer description area inside the details panel */
 #detail-desc { margin: 8px 0 12px 0; white-space:pre-wrap; background: rgba(5,12,16,0.2); padding:10px; border-radius:6px; }

@@ -90,36 +90,28 @@ async function init() {
               const diff = ts - now;
               n.textContent = formatCountdown(diff);
             });
-            // also update elapsed timers (MM:SS) for each dungeon button
+            // also update elapsed timer in the details header (if shown)
             try {
-              const elapsedNodes = document.querySelectorAll('.dungeon-item .elapsed-timer');
               const nowSec = Math.floor(Date.now() / 1000);
-              // ensure storage
               window.__dungeoneer_elapsed = window.__dungeoneer_elapsed || {};
-              elapsedNodes.forEach(en => {
-                const btn = en.closest('.dungeon-item');
-                if (!btn) return;
-                const did = btn.getAttribute('data-id');
-                if (!did) return;
-                const state = window.__dungeoneer_elapsed[did];
+              const detailTimer = document.querySelector('#detail-title .elapsed-timer');
+              if (detailTimer && currentSelectedId) {
+                const state = window.__dungeoneer_elapsed[currentSelectedId];
                 if (!state) {
-                  // hidden
-                  en.style.display = 'none';
-                  en.textContent = '';
-                  return;
-                }
-                if (state.status === 'running') {
+                  detailTimer.style.display = 'none';
+                  detailTimer.textContent = '';
+                } else if (state.status === 'running') {
                   const elapsed = (nowSec - (state.startAt || nowSec)) + (state.baseElapsed || 0);
-                  en.style.display = '';
-                  en.textContent = formatElapsedMMSS(elapsed);
+                  detailTimer.style.display = '';
+                  detailTimer.textContent = formatElapsedMMSS(elapsed);
                 } else if (state.status === 'stopped') {
-                  en.style.display = '';
-                  en.textContent = formatElapsedMMSS(state.baseElapsed || 0);
+                  detailTimer.style.display = '';
+                  detailTimer.textContent = formatElapsedMMSS(state.baseElapsed || 0);
                 } else {
-                  en.style.display = 'none';
-                  en.textContent = '';
+                  detailTimer.style.display = 'none';
+                  detailTimer.textContent = '';
                 }
-              });
+              }
             } catch (ee) { /* ignore elapsed update errors */ }
           } catch (err) {
             // guard against unexpected DOM changes
@@ -156,16 +148,7 @@ async function init() {
   left.textContent = kindText ? `${clean(nameText)} — ${clean(kindText)}${playerCountSuffix(data[id], kindText)}` : `${clean(nameText)}${playerCountSuffix(data[id], kindText)}`;
         // apply initial state styling (may be updated by background fetch)
         applyStateClass(btn, data[id], id);
-    // create an elapsed timer element (MM:SS) that will be shown/hidden based on state transitions
-    const elapsed = document.createElement('span');
-    elapsed.className = 'elapsed-timer';
-    // keep element visually compact and to the right of the label; styling can be refined in CSS
-    elapsed.style.marginLeft = '8px';
-    elapsed.style.marginRight = '8px';
-    elapsed.style.whiteSpace = 'nowrap';
-    elapsed.textContent = '';
-    btn.appendChild(left);
-    btn.appendChild(elapsed);
+  btn.appendChild(left);
         // if structured kind not present in the listing, fetch the dungeon details in background
         if (!kindText) {
           (async () => {
@@ -207,8 +190,7 @@ async function init() {
           right.textContent = '';
         }
         btn.appendChild(right);
-        // initialize elapsed state for this entry according to the current class/state
-        try { updateElapsedStateForBtn(btn, data[id], id); } catch (e) { /* swallow */ }
+  // (elapsed timers are rendered on the main details panel; will be updated when details are loaded)
         btn.onclick = () => loadDetails(id);
         list.appendChild(btn);
       }
@@ -268,19 +250,32 @@ async function init() {
     // helper to reset
     const resetState = () => { window.__dungeoneer_elapsed[id] = { status: 'hidden', startAt: 0, baseElapsed: 0, prevPlayers: players }; };
 
-    // If any->Empty: reset/hide
+    // If any->Empty: handle special-case transitions then reset/hide only when previously running
     if (isEmpty) {
-      resetState();
-      // ensure DOM reflects it
-      const el = btn.querySelector('.elapsed-timer'); if (el) { el.style.display = 'none'; el.textContent = ''; }
+      // Special-case: Cleared -> Closed should reset the timer regardless of prev.status
+      if (prev && prev.kind === 'cleared' && kind === 'closed') {
+        resetState();
+        const el = btn.querySelector('.elapsed-timer'); if (el) { el.style.display = 'none'; el.textContent = ''; }
+        return;
+      }
+      // Otherwise, only reset/hide when the timer was previously running (i.e. active)
+      if (prev && prev.status === 'running') {
+        // previous state was active: reset/hide the timer
+        resetState();
+        // ensure DOM reflects it
+        const el = btn.querySelector('.elapsed-timer'); if (el) { el.style.display = 'none'; el.textContent = ''; }
+      } else {
+        // previous state wasn't actively running — preserve stopped/hidden state but update prevPlayers
+        window.__dungeoneer_elapsed[id] = Object.assign({}, prev, { prevPlayers: players });
+      }
       return;
     }
 
-    // Boss -> Cleared: stop but keep rendered
-    if (prev && prev.kind === 'boss' && kind === 'cleared') {
+    // Transition into Cleared: stop (pause) the timer but keep it rendered
+    if (kind === 'cleared' && !(prev && prev.kind === 'cleared')) {
       // stop timer: compute elapsed so far
-      let base = prev.baseElapsed || 0;
-      if (prev.status === 'running' && prev.startAt) {
+      let base = (prev && prev.baseElapsed) ? prev.baseElapsed : 0;
+      if (prev && prev.status === 'running' && prev.startAt) {
         base += Math.floor(Date.now() / 1000) - prev.startAt;
       }
       window.__dungeoneer_elapsed[id] = { status: 'stopped', startAt: 0, baseElapsed: base, prevPlayers: players, kind };
@@ -297,7 +292,7 @@ async function init() {
 
     // Empty -> Active: start
     // Detect transition from previously empty (or hidden) to now having players and a non-closed kind
-    if ((prevWasEmpty || prev.status === 'hidden') && !isEmpty && kind !== 'closed') {
+    if ((prevWasEmpty || prev.status === 'hidden') && !isEmpty && kind !== 'closed' && kind !== 'cleared') {
       // start new timer
       window.__dungeoneer_elapsed[id] = { status: 'running', startAt: Math.floor(Date.now() / 1000), baseElapsed: 0, prevPlayers: players, kind };
       const el = btn.querySelector('.elapsed-timer'); if (el) { el.style.display = ''; el.textContent = formatElapsedMMSS(0); }
@@ -525,7 +520,26 @@ async function init() {
         titleEl.id = 'detail-title';
         details.insertBefore(titleEl, details.firstChild);
       }
-      if (titleEl.textContent !== titleText) titleEl.textContent = titleText;
+      // keep the visible title text inside an inner span so we don't overwrite the elapsed timer
+      let titleTextSpan = titleEl.querySelector('.detail-title-text');
+      if (!titleTextSpan) {
+        titleTextSpan = document.createElement('span');
+        titleTextSpan.className = 'detail-title-text';
+        titleEl.appendChild(titleTextSpan);
+      }
+      if (titleTextSpan.textContent !== titleText) titleTextSpan.textContent = titleText;
+      // ensure an elapsed timer element is present in the header (right-aligned)
+      let titleElapsed = titleEl.querySelector('.elapsed-timer');
+      if (!titleElapsed) {
+        titleElapsed = document.createElement('span');
+        titleElapsed.className = 'elapsed-timer';
+        titleElapsed.style.marginLeft = '12px';
+        titleElapsed.style.fontFamily = 'Courier New, monospace';
+        titleElapsed.style.color = '#9aa6b2';
+        titleElapsed.style.fontSize = '0.95em';
+        titleElapsed.textContent = '';
+        titleEl.appendChild(titleElapsed);
+      }
 
       // description (compute cleaned desc)
       let desc = '';
@@ -678,12 +692,23 @@ async function init() {
         return li;
       }
 
-      // ensure contrib container header exists
-      if (!contrib.querySelector(':scope > h3')) contrib.innerHTML = '<h3>Contribution (Latest Run) <button id="copy-contributions" class="copy-btn" style="margin-left: 10px;">Copy</button></h3>';
+      // ensure contrib container header exists (create without clobbering existing children)
+      let contribHeader = contrib.querySelector(':scope > h3');
+      if (!contribHeader) {
+        contribHeader = document.createElement('h3');
+        contribHeader.innerHTML = 'Contribution (Latest Run) <button id="copy-contributions" class="copy-btn" style="margin-left: 10px;">Copy</button>';
+        contrib.insertBefore(contribHeader, contrib.firstChild);
+      }
+
       if (last.contrib !== contribListJson || isSwitchingDungeon) {
-  // remove only the contributions list or "No contributions" message (preserve snapshots/container)
-  const existingLists = contrib.querySelectorAll(':scope > .contrib-entries, :scope > p');
-  existingLists.forEach(n => n.remove());
+        // remove only the contributions list or "No contributions" message (preserve snapshots/container)
+        const existingLists = contrib.querySelectorAll(':scope > .contrib-entries, :scope > p');
+        existingLists.forEach(n => n.remove());
+
+        // insert contributions (or placeholder message) immediately after the header
+        const snapContainer = contrib.querySelector(':scope > .snapshots-container');
+        const insertBeforeNode = snapContainer || contribHeader.nextSibling || null;
+
         if (d.contributions && d.contributions.length) {
           const cUl = document.createElement('ul');
           cUl.className = 'contrib-entries';
@@ -692,9 +717,13 @@ async function init() {
             const isTotal = parsed && parsed.player && parsed.player.toLowerCase().includes('total');
             cUl.appendChild(makeContribLi(parsed || { player: String(c), amount: '', percent: '' }, isTotal));
           }
-          contrib.appendChild(cUl);
+          if (insertBeforeNode) contrib.insertBefore(cUl, insertBeforeNode);
+          else contrib.appendChild(cUl);
         } else {
-          contrib.innerHTML += '<p><em>Contribution list will populate after boss is defeated... </em></p>';
+          const p = document.createElement('p');
+          p.innerHTML = '<em>Contribution list will populate after boss is defeated... </em>';
+          if (insertBeforeNode) contrib.insertBefore(p, insertBeforeNode);
+          else contrib.appendChild(p);
         }
       }
 
@@ -832,6 +861,8 @@ async function init() {
       }
 
       setStatus('loaded details');
+  // update elapsed state for the currently displayed dungeon so the detail header timer is shown/hidden/stopped
+  try { updateElapsedStateForBtn(details, d, id); } catch (e) { /* swallow */ }
       // If this load was manual (user clicked), start/reset the auto-refresh for details
       if (manual) {
         currentSelectedId = id;
