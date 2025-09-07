@@ -656,7 +656,24 @@ async function init() {
           snaps: snapsJson
         });
       } catch (err) {
-        // ignore snapshot errors
+        // If fetching snapshots failed (404 or other), remove any existing snapshots
+        // container so we don't display stale snapshots from a previously-selected
+        // dungeon. Also update the cached last_details for this id to reflect
+        // an empty snapshots list.
+        const old = contrib.querySelector('.snapshots-container'); if (old) old.remove();
+        try {
+          window.__dungeoneer_last_details[id] = Object.assign({}, last, {
+            title: titleText,
+            desc: desc,
+            players: playersJSON,
+            boss: atBossStatus,
+            contrib: contribListJson,
+            snaps: JSON.stringify([])
+          });
+        } catch (e) {
+          // ignore any errors while trying to update cache
+        }
+        // swallow the original error to avoid breaking detail rendering
       }
 
       setStatus('loaded details');
