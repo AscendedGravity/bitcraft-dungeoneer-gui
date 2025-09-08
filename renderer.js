@@ -879,9 +879,7 @@ async function init() {
     }
   }
 
-  document.getElementById('refresh-btn').addEventListener('click', loadList);
   await loadList();
-  // auto-refresh list every 10s
   setInterval(loadList, 10000);
 }
 
