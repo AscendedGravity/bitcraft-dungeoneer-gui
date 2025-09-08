@@ -653,6 +653,7 @@ async function init() {
         }
         // string: try to split by ':' then extract numbers
   const s = String(item).replace(/`/g, '').replace(/^\*+|\*+$/g, '').trim();
+        // First try the old colon-delimited form: "Name: ..."
         const parts = s.split(':');
         if (parts.length >= 2) {
           const player = parts.shift().trim();
@@ -668,6 +669,14 @@ async function init() {
             const parenMatch = rest.match(/\((\d+(?:\.\d+)?)\)/);
             if (parenMatch) percent = parenMatch[1];
           }
+          return { player, amount: amount.replace(/,/g, ''), percent };
+        }
+
+        const altMatch = s.match(/^(.*\S)\s+([-+]?\d[\d,]*(?:\.\d+)?)(?:\s*\(?\s*([\d.]+)\s*%?\s*\)?)?$/);
+        if (altMatch) {
+          const player = (altMatch[1] || '').trim();
+          const amount = (altMatch[2] || '').trim();
+          const percent = (altMatch[3] || '').trim();
           return { player, amount: amount.replace(/,/g, ''), percent };
         }
         return { player: s, amount: '', percent: '' };
