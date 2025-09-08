@@ -7,6 +7,9 @@
     "start": "electron .",
     "test": "jest --runInBand"
   },
+  "dependencies": {
+    "dotenv": "^16.1.4"
+  },
   "devDependencies": {
     "electron": "^26.0.0",
     "eslint": "^9.35.0",
