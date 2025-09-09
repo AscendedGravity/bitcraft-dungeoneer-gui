@@ -232,6 +232,20 @@ async function init() {
   function updateElapsedStateForBtn(btn, entry, id) {
     window.__dungeoneer_elapsed = window.__dungeoneer_elapsed || {};
     const prev = window.__dungeoneer_elapsed[id] || { status: 'hidden', startAt: 0, baseElapsed: 0 };
+    // helper to persist last known elapsed before we reset/hide the timer
+    const persistLastElapsed = (p) => {
+      try {
+        window.__dungeoneer_last_elapsed = window.__dungeoneer_last_elapsed || {};
+        let last = 0;
+        if (p) {
+          last = p.baseElapsed || 0;
+          if (p.status === 'running' && p.startAt) {
+            last += Math.floor(Date.now() / 1000) - p.startAt;
+          }
+        }
+        window.__dungeoneer_last_elapsed[id] = last;
+      } catch (e) { /* swallow */ }
+    };
     const kind = getNormalizedKind(entry);
     const players = getPlayersCount(entry);
     // Determine transitions according to rules:
@@ -254,6 +268,7 @@ async function init() {
     if (isEmpty) {
       // Special-case: Cleared -> Closed should reset the timer regardless of prev.status
       if (prev && prev.kind === 'cleared' && kind === 'closed') {
+        persistLastElapsed(prev);
         resetState();
         const el = btn.querySelector('.elapsed-timer'); if (el) { el.style.display = 'none'; el.textContent = ''; }
         return;
@@ -261,6 +276,7 @@ async function init() {
       // Otherwise, only reset/hide when the timer was previously running (i.e. active)
       if (prev && prev.status === 'running') {
         // previous state was active: reset/hide the timer
+        persistLastElapsed(prev);
         resetState();
         // ensure DOM reflects it
         const el = btn.querySelector('.elapsed-timer'); if (el) { el.style.display = 'none'; el.textContent = ''; }
@@ -285,6 +301,7 @@ async function init() {
 
     // Cleared -> Closed: reset/hide
     if (prev && prev.kind === 'cleared' && kind === 'closed') {
+      persistLastElapsed(prev);
       resetState();
       const el = btn.querySelector('.elapsed-timer'); if (el) { el.style.display = 'none'; el.textContent = ''; }
       return;
@@ -751,7 +768,27 @@ async function init() {
               return `${parsed.player} - ${parsed.percent}%`;
             })
             .join(' | ');
-          navigator.clipboard.writeText(formatted);
+          // append run time from elapsed timer state for this dungeon (MM:SS)
+          let runTimeSegment = '';
+          try {
+            const elapsedState = (window.__dungeoneer_elapsed || {})[id];
+            let elapsedSec = 0;
+            if (elapsedState && elapsedState.status) {
+              const nowSec = Math.floor(Date.now() / 1000);
+              if (elapsedState.status === 'running') {
+                elapsedSec = (nowSec - (elapsedState.startAt || nowSec)) + (elapsedState.baseElapsed || 0);
+              } else if (elapsedState.status === 'stopped') {
+                elapsedSec = elapsedState.baseElapsed || 0;
+              }
+            } else {
+              // fallback: use last persisted elapsed if present
+              const last = (window.__dungeoneer_last_elapsed || {})[id];
+              if (typeof last === 'number') elapsedSec = last;
+            }
+            if (elapsedSec) runTimeSegment = ` | Run Time: ${formatElapsedMMSS(elapsedSec)}`;
+          } catch (e) { /* ignore run time errors */ }
+
+          navigator.clipboard.writeText(formatted + runTimeSegment);
         };
       }
 
