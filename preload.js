@@ -59,4 +59,15 @@ contextBridge.exposeInMainWorld("api", {
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
   },
+  // expose connection info for display
+  getApiBase: () => {
+    const configured = process.env.DUNGEONEER_API_BASE || "";
+    let origin = "";
+    try {
+      origin = configured ? new URL(configured).origin : "";
+    } catch (e) {
+      origin = configured || "";
+    }
+    return { raw: configured, origin };
+  },
 });

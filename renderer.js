@@ -219,9 +219,23 @@ async function init() {
                 )}${playerCountSuffix(dd, sk)}`;
               // update styling with full details
               applyStateClass(btn, dd, id);
-              // update elapsed state according to new details
+              // update elapsed state according to new details - prefer server-side persisted state when available
               try {
-                updateElapsedStateForBtn(btn, dd, id);
+                // Try to fetch server-side elapsed state for this dungeon and apply it
+                (async () => {
+                  try {
+                    const serverEs = await fetchElapsedStateFromServer(id);
+                    if (serverEs) applyElapsedStateFromServer(id, serverEs);
+                  } catch (e) {
+                    // ignore server fetch errors
+                  } finally {
+                    try {
+                      updateElapsedStateForBtn(btn, dd, id);
+                    } catch (e) {
+                      /* swallow */
+                    }
+                  }
+                })();
               } catch (e) {
                 /* swallow */
               }
@@ -514,6 +528,57 @@ async function init() {
       return n;
     }
     return 0;
+  }
+
+  // Fetch elapsed state from the backend for a given dungeon id
+  async function fetchElapsedStateFromServer(id) {
+    try {
+      const url = `/dungeondetails/${id}/elapsed`;
+      const res = await window.api.fetchJSON(url);
+      return res;
+    } catch (e) {
+      // network/backoff errors: swallow and let frontend keep its state
+      return null;
+    }
+  }
+
+  // Map backend elapsed state shape into the frontend persisted shape
+  function applyElapsedStateFromServer(id, es) {
+    if (!es) return;
+    window.__dungeoneer_elapsed = window.__dungeoneer_elapsed || {};
+    const serverStatus = String(es.status || "hidden");
+    const prevPlayers = es.prev_players === undefined || es.prev_players === null ? 0 : Number(es.prev_players);
+    const kind = es.kind ? String(es.kind).toLowerCase() : "";
+
+    const mapped = {
+      status: serverStatus,
+      startAt: 0,
+      baseElapsed: 0,
+      prevPlayers,
+      kind,
+    };
+
+    if (serverStatus === "running") {
+      // prefer authoritative start_at from backend; fall back to now
+      mapped.startAt = es.start_at ? Number(es.start_at) : Math.floor(Date.now() / 1000);
+      mapped.baseElapsed = 0;
+    } else if (serverStatus === "stopped") {
+      // compute accumulated elapsed from start->stopped when available
+      if (es.stopped_at && es.start_at) {
+        mapped.baseElapsed = Number(es.stopped_at) - Number(es.start_at);
+      } else if (es.stopped_at) {
+        mapped.baseElapsed = Number(es.stopped_at);
+      } else {
+        mapped.baseElapsed = 0;
+      }
+      mapped.startAt = 0;
+    } else {
+      // hidden or unknown
+      mapped.startAt = 0;
+      mapped.baseElapsed = 0;
+    }
+
+    window.__dungeoneer_elapsed[id] = mapped;
   }
 
   // apply a CSS class to a dungeon button based on its state and players
@@ -1049,7 +1114,6 @@ async function init() {
             if (elapsedSec)
               runTimeSegment = ` | Run Time: ${formatElapsedMMSS(elapsedSec)}`;
           } catch (e) {
-            /* ignore run time errors */
           }
 
           navigator.clipboard.writeText(formatted + runTimeSegment);
@@ -1199,17 +1263,26 @@ async function init() {
             snaps: JSON.stringify([]),
           });
         } catch (e) {
-          // ignore any errors while trying to update cache
         }
-        // swallow the original error to avoid breaking detail rendering
       }
 
       setStatus("loaded details");
       // update elapsed state for the currently displayed dungeon so the detail header timer is shown/hidden/stopped
       try {
-        updateElapsedStateForBtn(details, d, id);
+        // Prefer authoritative server elapsed state when switching or when the cached details changed
+        (async () => {
+          try {
+            const serverEs = await fetchElapsedStateFromServer(id);
+            if (serverEs) applyElapsedStateFromServer(id, serverEs);
+          } catch (e) {
+          } finally {
+            try {
+              updateElapsedStateForBtn(details, d, id);
+            } catch (e) {
+            }
+          }
+        })();
       } catch (e) {
-        /* swallow */
       }
       // If this load was manual (user clicked), start/reset the auto-refresh for details
       if (manual) {
@@ -1228,7 +1301,60 @@ async function init() {
   }
 
   await loadList();
+  // On startup, fetch server-side elapsed states for visible dungeons so timers reflect persisted values
+  (async () => {
+    try {
+      const listNodes = document.querySelectorAll('.dungeon-item');
+      const ids = Array.from(listNodes).map((n) => n.getAttribute('data-id')).filter(Boolean);
+      // fetch in parallel but don't fail startup on any single error
+      await Promise.all(ids.map(async (id) => {
+        try {
+          const es = await fetchElapsedStateFromServer(id);
+          if (es) applyElapsedStateFromServer(id, es);
+        } catch (e) {
+          /* ignore individual errors */
+        }
+      }));
+    } catch (e) {
+    }
+  })();
+
   setInterval(loadList, 10000);
+
+  // Render connection information at bottom of sidebar
+  try {
+    const conn = (window.api && window.api.getApiBase) ? window.api.getApiBase() : null;
+    const connEl = document.getElementById('connection-info');
+    if (connEl) {
+      // show a friendly label; if we have a value, hide it visually but put it in the title
+      const label = document.createElement('span');
+      label.textContent = 'Connected to: ';
+      const value = document.createElement('em');
+      // default text when not configured
+      let displayText = 'not configured';
+      let fullValue = '';
+      if (conn && conn.origin) {
+        displayText = 'hidden';
+        fullValue = conn.origin;
+      } else if (conn && conn.raw) {
+        displayText = 'hidden';
+        fullValue = conn.raw;
+      }
+      // create masked (visible) and real (hidden until hover) spans
+      const masked = document.createElement('em');
+      masked.className = 'conn-hidden-mask';
+      masked.textContent = displayText;
+
+      const real = document.createElement('span');
+      real.className = 'conn-hidden-real';
+      real.textContent = fullValue || '';
+
+      connEl.innerHTML = '';
+      connEl.appendChild(label);
+      connEl.appendChild(masked);
+      connEl.appendChild(real);
+    }
+  } catch (e) {}
 }
 
 // export helpers for unit testing in Node (when file is required from test)
